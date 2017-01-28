@@ -1,0 +1,288 @@
+package godef
+
+import (
+	"errors"
+	"fmt"
+	"go/build"
+	"go/token"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"unicode/utf8"
+
+	util "github.com/charlievieth/buildutil"
+)
+
+var knownOS = make(map[string]bool)
+var knownArch = make(map[string]bool)
+
+func init() {
+	for _, s := range util.KnownOSList() {
+		knownOS[s] = true
+	}
+	for _, s := range util.KnownArchList() {
+		knownArch[s] = true
+	}
+}
+
+type Position struct {
+	Filename string // filename, if any
+	Offset   int    // offset, starting at 0
+	Line     int    // line number, starting at 1
+	Column   int    // column number, starting at 1 (character count)
+}
+
+func newPosition(tp token.Position) *Position {
+	p := Position(tp)
+	return &p
+}
+
+func (p Position) IsValid() bool { return p.Line > 0 }
+
+func (p Position) String() string {
+	s := p.Filename
+	if p.IsValid() {
+		if s != "" {
+			s += ":"
+		}
+		s += fmt.Sprintf("%d:%d", p.Line, p.Column)
+	}
+	if s == "" {
+		s = "-"
+	}
+	return s
+}
+
+type Config struct {
+	UseOffset bool
+	Context   build.Context
+}
+
+var alternateArchList = [...]string{
+	// Preferred
+	"amd64",
+	"386",
+
+	// Arbitrary
+	"amd64p32",
+	"arm",
+	"armbe",
+	"arm64",
+	"arm64be",
+	"ppc64",
+	"ppc64le",
+	"mips",
+	"mipsle",
+	"mips64",
+	"mips64le",
+	"mips64p32",
+	"mips64p32le",
+	"ppc",
+	"s390",
+	"s390x",
+	"sparc",
+	"sparc64",
+}
+
+var alternateOSList = [...]string{
+	// Preferred
+	"darwin",
+	"linux",
+	"windows ",
+
+	// Arbitrary
+	"freebsd",
+	"openbsd",
+	"netbsd",
+	"android",
+	"dragonfly",
+	"nacl",
+	"plan9",
+	"solaris",
+}
+
+func keysIntersect(a, b map[string]bool) bool {
+	for k := range a {
+		if _, ok := b[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func matchTagValue(val, def string, tags, known map[string]bool, alt []string) string {
+	if !keysIntersect(tags, known) {
+		return val
+	}
+	if ok, found := tags[val]; ok || !found {
+		return val
+	}
+	if tags[def] {
+		return def
+	}
+	for _, s := range alt {
+		if known[s] && tags[s] {
+			return s
+		}
+	}
+	return val
+}
+
+func updateGOPATH(ctxt *build.Context, filename string) string {
+	_, _, err := guessImportPath(filename, ctxt)
+	if err == nil {
+		return ctxt.GOPATH
+	}
+	if e, ok := err.(*PathError); ok && strings.Contains(e.Dir, "src") {
+		dirs := segments(e.Dir)
+		for i := len(dirs) - 1; i > 0; i-- {
+			if dirs[i] == "src" {
+				return strings.Join(dirs[:i], string(filepath.Separator)) +
+					string(os.PathListSeparator) + ctxt.GOPATH
+			}
+		}
+	}
+	return ctxt.GOPATH
+}
+
+// Broken somehow
+func xxx_updateContextForFile(ctxt *build.Context, filename string, src []byte) *build.Context {
+	tags := make(map[string]bool)
+	if !util.GoodOSArchFile(ctxt, filename, tags) || !util.ShouldBuild(ctxt, src, tags) {
+		ctxt.GOOS = matchTagValue(ctxt.GOOS, runtime.GOOS, tags,
+			knownOS, alternateOSList[0:])
+		ctxt.GOARCH = matchTagValue(ctxt.GOARCH, runtime.GOARCH, tags,
+			knownArch, alternateArchList[0:])
+	}
+	ctxt.GOPATH = updateGOPATH(ctxt, filename)
+	return ctxt
+}
+
+func updateContextForFile(ctxt *build.Context, filename string, src []byte) *build.Context {
+	tags := make(map[string]bool)
+	if !util.GoodOSArchFile(ctxt, filename, tags) || !util.ShouldBuild(ctxt, src, tags) {
+		for tag, ok := range tags {
+			if knownOS[tag] {
+				switch {
+				case ok && ctxt.GOOS != tag:
+					ctxt.GOOS = tag
+				case !ok && ctxt.GOOS == tag && runtime.GOOS != ctxt.GOOS:
+					if tags[runtime.GOOS] {
+						ctxt.GOOS = runtime.GOOS
+					}
+				}
+			}
+		}
+	}
+	if _, _, err := guessImportPath(filename, ctxt); err != nil {
+		if e, ok := err.(*PathError); ok && strings.Contains(e.Dir, "src") {
+			dirs := segments(e.Dir)
+			for i := len(dirs) - 1; i > 0; i-- {
+				if dirs[i] == "src" {
+					path := strings.Join(dirs[:i], string(filepath.Separator))
+					ctxt.GOPATH = path + string(os.PathListSeparator) + ctxt.GOPATH
+					break
+				}
+			}
+		}
+	}
+	return ctxt
+}
+
+func (c *Config) Define(filename string, cursor int, src interface{}) (*Position, []byte, error) {
+	filename = filepath.Clean(filename)
+	body, off, err := readSourceOffset(filename, cursor, src)
+	if err != nil {
+		return nil, nil, err
+	}
+	modified := map[string][]byte{
+		filename: body,
+	}
+	ctxt := useModifiedFiles(&c.Context, modified)
+	ctxt = updateContextForFile(ctxt, filename, body)
+	query := &Query{
+		Mode:  "definition",
+		Pos:   fmt.Sprintf("%s:#%d", filename, off),
+		Build: ctxt,
+	}
+	if err := definition(query); err != nil {
+		return nil, nil, err
+	}
+	pos := query.Fset.Position(query.result.pos)
+	b, err := ioutil.ReadFile(pos.Filename)
+	if err != nil {
+		return nil, nil, err
+	}
+	return newPosition(pos), b, nil
+}
+
+func readSourceOffset(filename string, cursor int, src interface{}) ([]byte, int, error) {
+	if cursor < 0 {
+		return nil, -1, errors.New("non-positive offset")
+	}
+	var (
+		b   []byte
+		n   int
+		err error
+	)
+	switch s := src.(type) {
+	case []byte:
+		b = s
+	case string:
+		if cursor < len(s) {
+			n = stringOffset(s, cursor)
+			b = []byte(s)
+		}
+	case nil:
+		b, err = ioutil.ReadFile(filename)
+	default:
+		err = errors.New("invalid source")
+	}
+	if err == nil && n == 0 {
+		if cursor < len(b) {
+			n = byteOffset(b, cursor)
+		} else {
+			err = errors.New("offset out of range")
+		}
+	}
+	return b, n, err
+}
+
+func stringOffset(src string, off int) int {
+	for i := range src {
+		if off == 0 {
+			return i
+		}
+		off--
+	}
+	return -1
+}
+
+func byteOffset(src []byte, off int) int {
+	// TODO: This needs to tested.
+	var i int
+	for len(src) != 0 {
+		if off == 0 {
+			return i
+		}
+		_, n := utf8.DecodeRune(src)
+		src = src[n:]
+		i += n
+		off--
+	}
+	return -1
+}
+
+func readSource(filename string, src interface{}) ([]byte, error) {
+	switch s := src.(type) {
+	case nil:
+		return ioutil.ReadFile(filename)
+	case string:
+		return []byte(s), nil
+	case []byte:
+		return s, nil
+	}
+	return nil, errors.New("invalid source")
+}
