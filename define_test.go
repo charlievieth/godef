@@ -2,6 +2,7 @@ package godef
 
 import (
 	"go/build"
+	"io/ioutil"
 	"path/filepath"
 	"testing"
 )
@@ -79,6 +80,21 @@ func TestDefine(t *testing.T) {
 		}
 		if pos.Column != x.exp.Column {
 			t.Errorf("Column (%+v): exp %d got %d\n", x, x.exp.Column, pos.Column)
+		}
+	}
+}
+
+func BenchmarkDefine(b *testing.B) {
+	const filename = "testdata/parser/parser.go"
+	src, err := ioutil.ReadFile(filename)
+	if err != nil {
+		b.Fatal(err)
+	}
+	conf := Config{Context: build.Default}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := conf.Define(filename, 62874, src); err != nil {
+			b.Fatal(err)
 		}
 	}
 }
