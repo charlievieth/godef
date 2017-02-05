@@ -67,7 +67,7 @@ func TestDefine(t *testing.T) {
 	for _, x := range defineTests {
 		pos, _, err := conf.Define(x.filename, x.offset, nil)
 		if err != nil {
-			t.Errorf("(%+v): %s\n", x, err)
+			t.Errorf("(%+v): %#v\n", x, err)
 			continue
 		}
 		name := filepath.Base(pos.Filename)
