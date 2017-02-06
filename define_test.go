@@ -61,6 +61,15 @@ var defineTests = []struct {
 			Column:   20,
 		},
 	},
+	{
+		filename: "testdata/os/path.go",
+		offset:   2181,
+		exp: Position{
+			Filename: "error.go",
+			Line:     56,
+			Column:   6,
+		},
+	},
 }
 
 func TestDefine(t *testing.T) {
@@ -85,7 +94,7 @@ func TestDefine(t *testing.T) {
 }
 
 func BenchmarkDefine(b *testing.B) {
-	const filename = "testdata/parser/parser.go"
+	const filename = "testdata/os/path.go"
 	src, err := ioutil.ReadFile(filename)
 	if err != nil {
 		b.Fatal(err)
@@ -93,7 +102,7 @@ func BenchmarkDefine(b *testing.B) {
 	conf := Config{Context: build.Default}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := conf.Define(filename, 62874, src); err != nil {
+		if _, _, err := conf.Define(filename, 2181, src); err != nil {
 			b.Fatal(err)
 		}
 	}
