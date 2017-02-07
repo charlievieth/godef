@@ -60,76 +60,6 @@ type Config struct {
 	Context   build.Context
 }
 
-var alternateArchList = [...]string{
-	// Preferred
-	"amd64",
-	"386",
-
-	// Arbitrary
-	"amd64p32",
-	"arm",
-	"armbe",
-	"arm64",
-	"arm64be",
-	"ppc64",
-	"ppc64le",
-	"mips",
-	"mipsle",
-	"mips64",
-	"mips64le",
-	"mips64p32",
-	"mips64p32le",
-	"ppc",
-	"s390",
-	"s390x",
-	"sparc",
-	"sparc64",
-}
-
-var alternateOSList = [...]string{
-	// Preferred
-	"darwin",
-	"linux",
-	"windows ",
-
-	// Arbitrary
-	"freebsd",
-	"openbsd",
-	"netbsd",
-	"android",
-	"dragonfly",
-	"nacl",
-	"plan9",
-	"solaris",
-}
-
-func keysIntersect(a, b map[string]bool) bool {
-	for k := range a {
-		if _, ok := b[k]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func matchTagValue(val, def string, tags, known map[string]bool, alt []string) string {
-	if !keysIntersect(tags, known) {
-		return val
-	}
-	if ok, found := tags[val]; ok || !found {
-		return val
-	}
-	if tags[def] {
-		return def
-	}
-	for _, s := range alt {
-		if known[s] && tags[s] {
-			return s
-		}
-	}
-	return val
-}
-
 func updateGOPATH(ctxt *build.Context, filename string) string {
 	_, _, err := guessImportPath(filename, ctxt)
 	if err == nil {
@@ -145,19 +75,6 @@ func updateGOPATH(ctxt *build.Context, filename string) string {
 		}
 	}
 	return ctxt.GOPATH
-}
-
-// Broken somehow
-func xxx_updateContextForFile(ctxt *build.Context, filename string, src []byte) *build.Context {
-	tags := make(map[string]bool)
-	if !util.GoodOSArchFile(ctxt, filename, tags) || !util.ShouldBuild(ctxt, src, tags) {
-		ctxt.GOOS = matchTagValue(ctxt.GOOS, runtime.GOOS, tags,
-			knownOS, alternateOSList[0:])
-		ctxt.GOARCH = matchTagValue(ctxt.GOARCH, runtime.GOARCH, tags,
-			knownArch, alternateArchList[0:])
-	}
-	ctxt.GOPATH = updateGOPATH(ctxt, filename)
-	return ctxt
 }
 
 func updateContextForFile(ctxt *build.Context, filename string, src []byte) *build.Context {
@@ -187,18 +104,7 @@ func updateContextForFile(ctxt *build.Context, filename string, src []byte) *bui
 		}
 
 	}
-	if _, _, err := guessImportPath(filename, ctxt); err != nil {
-		if e, ok := err.(*PathError); ok && strings.Contains(e.Dir, "src") {
-			dirs := segments(e.Dir)
-			for i := len(dirs) - 1; i > 0; i-- {
-				if dirs[i] == "src" {
-					path := strings.Join(dirs[:i], string(filepath.Separator))
-					ctxt.GOPATH = path + string(os.PathListSeparator) + ctxt.GOPATH
-					break
-				}
-			}
-		}
-	}
+	ctxt.GOPATH = updateGOPATH(ctxt, filename)
 	return ctxt
 }
 
