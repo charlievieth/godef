@@ -77,32 +77,51 @@ func updateGOPATH(ctxt *build.Context, filename string) string {
 	return ctxt.GOPATH
 }
 
+func updateGOOS(ctxt *build.Context, tags map[string]bool) string {
+	if tags[ctxt.GOOS] {
+		return ctxt.GOOS
+	}
+	for tag, ok := range tags {
+		if !knownOS[tag] {
+			continue
+		}
+		if ok && ctxt.GOOS != tag {
+			return tag
+		}
+		if !ok && ctxt.GOOS == tag && runtime.GOOS != ctxt.GOOS {
+			if tags[runtime.GOOS] {
+				return runtime.GOOS
+			}
+		}
+	}
+	return ctxt.GOOS
+}
+
+func updateGOARCH(ctxt *build.Context, tags map[string]bool) string {
+	if tags[ctxt.GOARCH] {
+		return ctxt.GOARCH
+	}
+	for tag, ok := range tags {
+		if !knownArch[tag] {
+			continue
+		}
+		if ok && ctxt.GOARCH != tag {
+			return tag
+		}
+		if !ok && ctxt.GOARCH == tag && runtime.GOARCH != ctxt.GOARCH {
+			if tags[runtime.GOARCH] {
+				return runtime.GOARCH
+			}
+		}
+	}
+	return ctxt.GOARCH
+}
+
 func updateContextForFile(ctxt *build.Context, filename string, src []byte) *build.Context {
 	tags := make(map[string]bool)
 	if !util.GoodOSArchFile(ctxt, filename, tags) || !util.ShouldBuild(ctxt, src, tags) {
-		for tag, ok := range tags {
-			switch {
-			case knownOS[tag]:
-				switch {
-				case ok && ctxt.GOOS != tag:
-					ctxt.GOOS = tag
-				case !ok && ctxt.GOOS == tag && runtime.GOOS != ctxt.GOOS:
-					if tags[runtime.GOOS] {
-						ctxt.GOOS = runtime.GOOS
-					}
-				}
-			case knownArch[tag]:
-				switch {
-				case ok && ctxt.GOARCH != tag:
-					ctxt.GOARCH = tag
-				case !ok && ctxt.GOARCH == tag && runtime.GOARCH != ctxt.GOARCH:
-					if tags[runtime.GOARCH] {
-						ctxt.GOARCH = runtime.GOARCH
-					}
-				}
-			}
-		}
-
+		ctxt.GOOS = updateGOOS(ctxt, tags)
+		ctxt.GOARCH = updateGOARCH(ctxt, tags)
 	}
 	ctxt.GOPATH = updateGOPATH(ctxt, filename)
 	return ctxt
