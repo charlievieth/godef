@@ -164,7 +164,8 @@ func updateContextForFile(ctxt *build.Context, filename string, src []byte) *bui
 	tags := make(map[string]bool)
 	if !util.GoodOSArchFile(ctxt, filename, tags) || !util.ShouldBuild(ctxt, src, tags) {
 		for tag, ok := range tags {
-			if knownOS[tag] {
+			switch {
+			case knownOS[tag]:
 				switch {
 				case ok && ctxt.GOOS != tag:
 					ctxt.GOOS = tag
@@ -173,8 +174,18 @@ func updateContextForFile(ctxt *build.Context, filename string, src []byte) *bui
 						ctxt.GOOS = runtime.GOOS
 					}
 				}
+			case knownArch[tag]:
+				switch {
+				case ok && ctxt.GOARCH != tag:
+					ctxt.GOARCH = tag
+				case !ok && ctxt.GOARCH == tag && runtime.GOARCH != ctxt.GOARCH:
+					if tags[runtime.GOARCH] {
+						ctxt.GOARCH = runtime.GOARCH
+					}
+				}
 			}
 		}
+
 	}
 	if _, _, err := guessImportPath(filename, ctxt); err != nil {
 		if e, ok := err.(*PathError); ok && strings.Contains(e.Dir, "src") {

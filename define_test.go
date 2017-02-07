@@ -3,18 +3,28 @@ package godef
 import (
 	"go/build"
 	"io/ioutil"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
-// func (c *Config) Define(filename string, cursor int, src interface{}) (*Position, []byte, error) {
+var haveGoSrc bool
+
+func init() {
+	if root := runtime.GOROOT(); root != "" {
+		_, err := os.Stat(filepath.Join(root, "src"))
+		haveGoSrc = err == nil
+	}
+}
 
 var defineTests = []struct {
-	filename  string
-	offset    int
-	expLine   int
-	expColumn int
-	exp       Position
+	filename      string
+	offset        int
+	expLine       int
+	expColumn     int
+	mustHaveGoSrc bool
+	exp           Position
 }{
 	{
 		filename: "testdata/parser/parser.go",
@@ -79,12 +89,49 @@ var defineTests = []struct {
 			Column:   6,
 		},
 	},
+	// Test that the Windows specific syscalls are returned.
+	{
+		filename: "testdata/os/exec_windows.go",
+		offset:   375,
+		exp: Position{
+			Filename: "zsyscall_windows.go",
+			Line:     692,
+			Column:   6,
+		},
+	},
+	{
+		filename: "testdata/os/file_windows.go",
+		offset:   10305,
+		exp: Position{
+			Filename: "syscall_windows.go",
+			Line:     340,
+			Column:   6,
+		},
+	},
+	// Test GOARCH matching (requires Go source code)
+	{
+		filename:      "runtime/signal_netbsd_386.go",
+		offset:        903,
+		mustHaveGoSrc: true,
+		exp: Position{
+			Filename: "signal_netbsd_386.go",
+			Line:     14,
+			Column:   19,
+		},
+	},
 }
 
-func TestDefine(t *testing.T) {
+func runDefineTests(t *testing.T, mustHaveGoSrc bool) {
 	conf := Config{Context: build.Default}
 	for _, x := range defineTests {
-		pos, _, err := conf.Define(x.filename, x.offset, nil)
+		if x.mustHaveGoSrc != mustHaveGoSrc {
+			continue
+		}
+		filename := x.filename
+		if x.mustHaveGoSrc {
+			filename = filepath.Join(runtime.GOROOT(), "src", x.filename)
+		}
+		pos, _, err := conf.Define(filename, x.offset, nil)
 		if err != nil {
 			t.Errorf("(%+v): %#v\n", x, err)
 			continue
@@ -100,6 +147,17 @@ func TestDefine(t *testing.T) {
 			t.Errorf("Column (%+v): exp %d got %d\n", x, x.exp.Column, pos.Column)
 		}
 	}
+}
+
+func TestDefine(t *testing.T) {
+	runDefineTests(t, false)
+}
+
+func TestDefine_StdLib(t *testing.T) {
+	if !haveGoSrc {
+		t.Skip("Test requires go source code to run (GOROOT/src not found).")
+	}
+	runDefineTests(t, true)
 }
 
 func BenchmarkDefine(b *testing.B) {
