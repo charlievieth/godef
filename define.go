@@ -186,29 +186,39 @@ func readSourceOffset(filename string, cursor int, src interface{}) ([]byte, int
 	return b, n, err
 }
 
-func stringOffset(src string, off int) int {
-	for i := range src {
-		if off == 0 {
-			return i
+func stringOffset(s string, off int) int {
+	i := 0
+	var n int
+	for n = 0; i < len(s) && n < off; n++ {
+		if s[i] < utf8.RuneSelf {
+			i++
+		} else {
+			_, size := utf8.DecodeRuneInString(s[i:])
+			i += size
 		}
-		off--
+	}
+	if n == off && i < len(s) {
+		return i
 	}
 	return -1
 }
 
-func byteOffset(src []byte, off int) int {
-	// TODO: This needs to tested.
-	var i int
-	for len(src) != 0 {
-		if off == 0 {
-			return i
+func byteOffset(s []byte, off int) int {
+	i := 0
+	var n int
+	for n = 0; i < len(s) && n < off; n++ {
+		if s[i] < utf8.RuneSelf {
+			i++
+		} else {
+			_, size := utf8.DecodeRune(s[i:])
+			i += size
 		}
-		_, n := utf8.DecodeRune(src)
-		src = src[n:]
-		i += n
-		off--
+	}
+	if n == off && i < len(s) {
+		return i
 	}
 	return -1
+
 }
 
 func readSource(filename string, src interface{}) ([]byte, error) {

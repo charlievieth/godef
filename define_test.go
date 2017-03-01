@@ -1,6 +1,7 @@
 package godef
 
 import (
+	"bytes"
 	"go/build"
 	"io/ioutil"
 	"os"
@@ -164,6 +165,51 @@ func BenchmarkDefine(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, _, err := conf.Define(filename, 3977, src); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestOffset(t *testing.T) {
+	const runeOffset = 5623
+	const filename = "testdata/offset_tests/test-1.go"
+	src, err := ioutil.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n := bytes.IndexByte(src, '$')
+	if n == -1 {
+		t.Fatalf("missing '$' in file: %s", filename)
+	}
+
+	{
+		o := stringOffset(string(src), runeOffset)
+		if o != n {
+			t.Fatalf("stringOffset: exp: %d, got: %d", n, o)
+		}
+	}
+	{
+		o := byteOffset(src, runeOffset)
+		if o != n {
+			t.Fatalf("byteOffset: exp: %d, got: %d", n, o)
+		}
+	}
+	{
+		_, o, err := readSourceOffset(filename, runeOffset, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o != n {
+			t.Fatalf("readSourceOffset: exp: %d, got: %d", n, o)
+		}
+	}
+	{
+		_, o, err := readSourceOffset("", runeOffset, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o != n {
+			t.Fatalf("readSourceOffset: exp: %d, got: %d", n, o)
 		}
 	}
 }
