@@ -89,14 +89,18 @@ var defineTests = []struct {
 			Column:   6,
 		},
 	},
-	// Test that the Windows specific syscalls are returned.
+	// TODO: These tests are dependent on file names not changing in the
+	// go standard library, which is brittle and should be changed.
+	//
+	// Test that the Windows specific syscalls are returned.  Only the
+	// filename is asserted on.
 	{
 		filename: "testdata/os/exec_windows.go",
 		offset:   375,
 		exp: Position{
 			Filename: "zsyscall_windows.go",
-			Line:     692,
-			Column:   6,
+			Line:     -1,
+			Column:   -1,
 		},
 	},
 	{
@@ -104,19 +108,8 @@ var defineTests = []struct {
 		offset:   10305,
 		exp: Position{
 			Filename: "syscall_windows.go",
-			Line:     340,
-			Column:   6,
-		},
-	},
-	// Test GOARCH matching (requires Go source code)
-	{
-		filename:      "runtime/signal_netbsd_386.go",
-		offset:        903,
-		mustHaveGoSrc: true,
-		exp: Position{
-			Filename: "signal_netbsd_386.go",
-			Line:     14,
-			Column:   19,
+			Line:     -1,
+			Column:   -1,
 		},
 	},
 }
@@ -140,10 +133,10 @@ func runDefineTests(t *testing.T, mustHaveGoSrc bool) {
 		if name != x.exp.Filename {
 			t.Errorf("Filename (%+v): exp %s got %s\n", x, x.exp.Filename, pos.Filename)
 		}
-		if pos.Line != x.exp.Line {
+		if x.exp.Line != -1 && pos.Line != x.exp.Line {
 			t.Errorf("Line (%+v): exp %d got %d\n", x, x.exp.Line, pos.Line)
 		}
-		if pos.Column != x.exp.Column {
+		if x.exp.Column != -1 && pos.Column != x.exp.Column {
 			t.Errorf("Column (%+v): exp %d got %d\n", x, x.exp.Column, pos.Column)
 		}
 	}
