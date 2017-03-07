@@ -1,16 +1,17 @@
 package godef
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/build"
 	"go/token"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"unicode/utf8"
 
 	util "github.com/charlievieth/buildutil"
 )
@@ -128,8 +129,7 @@ func updateContextForFile(ctxt *build.Context, filename string, src []byte) *bui
 }
 
 func (c *Config) Define(filename string, cursor int, src interface{}) (*Position, []byte, error) {
-	filename = filepath.Clean(filename)
-	body, off, err := readSourceOffset(filename, cursor, src)
+	body, err := readSource(filename, src)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -140,7 +140,7 @@ func (c *Config) Define(filename string, cursor int, src interface{}) (*Position
 	ctxt = updateContextForFile(ctxt, filename, body)
 	query := &Query{
 		Mode:  "definition",
-		Pos:   fmt.Sprintf("%s:#%d", filename, off),
+		Pos:   fmt.Sprintf("%s:#%d", filename, cursor),
 		Build: ctxt,
 	}
 	if err := definition(query); err != nil {
@@ -154,81 +154,26 @@ func (c *Config) Define(filename string, cursor int, src interface{}) (*Position
 	return newPosition(pos), b, nil
 }
 
-func readSourceOffset(filename string, cursor int, src interface{}) ([]byte, int, error) {
-	if cursor < 0 {
-		return nil, -1, errors.New("non-positive offset")
-	}
-	var (
-		b   []byte
-		n   int
-		err error
-	)
-	switch s := src.(type) {
-	case []byte:
-		b = s
-	case string:
-		if cursor < len(s) {
-			n = stringOffset(s, cursor)
-			b = []byte(s)
-		}
-	case nil:
-		b, err = ioutil.ReadFile(filename)
-	default:
-		err = errors.New("invalid source")
-	}
-	if err == nil && n == 0 {
-		if cursor < len(b) {
-			n = byteOffset(b, cursor)
-		} else {
-			err = errors.New("offset out of range")
-		}
-	}
-	return b, n, err
-}
-
-func stringOffset(s string, off int) int {
-	i := 0
-	var n int
-	for n = 0; i < len(s) && n < off; n++ {
-		if s[i] < utf8.RuneSelf {
-			i++
-		} else {
-			_, size := utf8.DecodeRuneInString(s[i:])
-			i += size
-		}
-	}
-	if n == off && i < len(s) {
-		return i
-	}
-	return -1
-}
-
-func byteOffset(s []byte, off int) int {
-	i := 0
-	var n int
-	for n = 0; i < len(s) && n < off; n++ {
-		if s[i] < utf8.RuneSelf {
-			i++
-		} else {
-			_, size := utf8.DecodeRune(s[i:])
-			i += size
-		}
-	}
-	if n == off && i < len(s) {
-		return i
-	}
-	return -1
-
-}
-
 func readSource(filename string, src interface{}) ([]byte, error) {
-	switch s := src.(type) {
-	case nil:
-		return ioutil.ReadFile(filename)
-	case string:
-		return []byte(s), nil
-	case []byte:
-		return s, nil
+	if src != nil {
+		switch s := src.(type) {
+		case string:
+			return []byte(s), nil
+		case []byte:
+			return s, nil
+		case *bytes.Buffer:
+			// is io.Reader, but src is already available in []byte form
+			if s != nil {
+				return s.Bytes(), nil
+			}
+		case io.Reader:
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, s); err != nil {
+				return nil, err
+			}
+			return buf.Bytes(), nil
+		}
+		return nil, errors.New("invalid source")
 	}
-	return nil, errors.New("invalid source")
+	return ioutil.ReadFile(filename)
 }
