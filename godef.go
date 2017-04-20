@@ -260,32 +260,35 @@ func importQueryPackage(pos string, conf *loader.Config) (string, error) {
 
 	_, importPath, err := guessImportPath(filename, conf.Build)
 	if err != nil {
-		return "", err // can't find GOPATH dir
-	}
+		// Can't find GOPATH dir.
+		// Treat the query file as its own package.
+		importPath = "command-line-arguments"
+		conf.CreateFromFilenames(importPath, filename)
+	} else {
+		// Check that it's possible to load the queried package.
+		// (e.g. guru tests contain different 'package' decls in same dir.)
+		// Keep consistent with logic in loader/util.go!
+		cfg2 := *conf.Build
+		cfg2.CgoEnabled = false
+		bp, err := cfg2.Import(importPath, "", 0)
+		if err != nil {
+			return "", err // no files for package
+		}
 
-	// Check that it's possible to load the queried package.
-	// (e.g. guru tests contain different 'package' decls in same dir.)
-	// Keep consistent with logic in loader/util.go!
-	cfg2 := *conf.Build
-	cfg2.CgoEnabled = false
-	bp, err := cfg2.Import(importPath, "", 0)
-	if err != nil {
-		return "", err // no files for package
-	}
-
-	switch pkgContainsFile(bp, filename) {
-	case 'T':
-		conf.ImportWithTests(importPath)
-	case 'X':
-		conf.ImportWithTests(importPath)
-		importPath += "_test" // for TypeCheckFuncBodies
-	case 'G':
-		conf.Import(importPath)
-	default:
-		// This happens for ad-hoc packages like
-		// $GOROOT/src/net/http/triv.go.
-		return "", fmt.Errorf("package %q doesn't contain file %s",
-			importPath, filename)
+		switch pkgContainsFile(bp, filename) {
+		case 'T':
+			conf.ImportWithTests(importPath)
+		case 'X':
+			conf.ImportWithTests(importPath)
+			importPath += "_test" // for TypeCheckFuncBodies
+		case 'G':
+			conf.Import(importPath)
+		default:
+			// This happens for ad-hoc packages like
+			// $GOROOT/src/net/http/triv.go.
+			return "", fmt.Errorf("package %q doesn't contain file %s",
+				importPath, filename)
+		}
 	}
 
 	conf.TypeCheckFuncBodies = func(p string) bool { return p == importPath }
@@ -313,11 +316,16 @@ func (p *PathError) Error() string {
 func guessImportPath(filename string, buildContext *build.Context) (srcdir, importPath string, err error) {
 	absFile, err := filepath.Abs(filename)
 	if err != nil {
-		err = fmt.Errorf("can't form absolute path of %s", filename)
-		return
+		return "", "", fmt.Errorf("can't form absolute path of %s: %v", filename, err)
 	}
-	absFileDir := segments(filepath.Dir(absFile))
 
+	absFileDir := filepath.Dir(absFile)
+	resolvedAbsFileDir, err := filepath.EvalSymlinks(absFileDir)
+	if err != nil {
+		return "", "", fmt.Errorf("can't evaluate symlinks of %s: %v", absFileDir, err)
+	}
+
+	segmentedAbsFileDir := segments(resolvedAbsFileDir)
 	// Find the innermost directory in $GOPATH that encloses filename.
 	minD := 1024
 	for _, gopathDir := range buildContext.SrcDirs() {
@@ -325,21 +333,24 @@ func guessImportPath(filename string, buildContext *build.Context) (srcdir, impo
 		if err != nil {
 			continue // e.g. non-existent dir on $GOPATH
 		}
-		d := prefixLen(segments(absDir), absFileDir)
+		resolvedAbsDir, err := filepath.EvalSymlinks(absDir)
+		if err != nil {
+			continue // e.g. non-existent dir on $GOPATH
+		}
+
+		d := prefixLen(segments(resolvedAbsDir), segmentedAbsFileDir)
 		// If there are multiple matches,
 		// prefer the innermost enclosing directory
 		// (smallest d).
 		if d >= 0 && d < minD {
 			minD = d
 			srcdir = gopathDir
-			importPath = strings.Join(absFileDir[len(absFileDir)-minD:], string(os.PathSeparator))
+			importPath = strings.Join(segmentedAbsFileDir[len(segmentedAbsFileDir)-minD:], string(os.PathSeparator))
 		}
 	}
 	if srcdir == "" {
-		return "", "", &PathError{
-			Dir:     filepath.Dir(absFile),
-			SrcDirs: buildContext.SrcDirs(),
-		}
+		return "", "", fmt.Errorf("directory %s is not beneath any of these GOROOT/GOPATH directories: %s",
+			filepath.Dir(absFile), strings.Join(buildContext.SrcDirs(), ", "))
 	}
 	if importPath == "" {
 		// This happens for e.g. $GOPATH/src/a.go, but
