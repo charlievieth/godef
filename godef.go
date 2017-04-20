@@ -19,6 +19,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -202,41 +203,70 @@ func findPackageMember(ctxt *build.Context, fset *token.FileSet, srcdir, pkg, me
 		return 0, token.NoPos, err // no files for package
 	}
 
-	// TODO(adonovan): opt: parallelize.
+	type result struct {
+		tok token.Token
+		pos token.Pos
+	}
+	ch := make(chan *result, len(bp.GoFiles))
+	gate := make(chan struct{}, runtime.NumCPU())
+	done := make(chan struct{})
+
 	for _, fname := range bp.GoFiles {
-		filename := filepath.Join(bp.Dir, fname)
+		go func(fname string) {
+			select {
+			case gate <- struct{}{}:
+			case <-done:
+				ch <- nil
+				return
+			}
+			defer func() { <-gate }()
 
-		// Parse the file, opening it the file via the build.Context
-		// so that we observe the effects of the -modified flag.
-		f, _ := buildutil.ParseFile(fset, ctxt, nil, ".", filename, parser.Mode(0))
-		if f == nil {
-			continue
-		}
+			filename := filepath.Join(bp.Dir, fname)
 
-		// Find a package-level decl called 'member'.
-		for _, decl := range f.Decls {
-			switch decl := decl.(type) {
-			case *ast.GenDecl:
-				for _, spec := range decl.Specs {
-					switch spec := spec.(type) {
-					case *ast.ValueSpec:
-						// const or var
-						for _, id := range spec.Names {
-							if id.Name == member {
-								return decl.Tok, id.Pos(), nil
+			// Parse the file, opening it the file via the build.Context
+			// so that we observe the effects of the -modified flag.
+			f, _ := buildutil.ParseFile(fset, ctxt, nil, ".", filename, parser.Mode(0))
+			if f == nil {
+				ch <- nil
+				return
+			}
+
+			// Find a package-level decl called 'member'.
+			for _, decl := range f.Decls {
+				switch decl := decl.(type) {
+				case *ast.GenDecl:
+					for _, spec := range decl.Specs {
+						switch spec := spec.(type) {
+						case *ast.ValueSpec:
+							// const or var
+							for _, id := range spec.Names {
+								if id.Name == member {
+									ch <- &result{decl.Tok, id.Pos()}
+									return
+								}
+							}
+						case *ast.TypeSpec:
+							if spec.Name.Name == member {
+								ch <- &result{token.TYPE, spec.Name.Pos()}
+								return
 							}
 						}
-					case *ast.TypeSpec:
-						if spec.Name.Name == member {
-							return token.TYPE, spec.Name.Pos(), nil
-						}
+					}
+				case *ast.FuncDecl:
+					if decl.Recv == nil && decl.Name.Name == member {
+						ch <- &result{token.FUNC, decl.Name.Pos()}
+						return
 					}
 				}
-			case *ast.FuncDecl:
-				if decl.Recv == nil && decl.Name.Name == member {
-					return token.FUNC, decl.Name.Pos(), nil
-				}
 			}
+			ch <- nil
+		}(fname)
+	}
+
+	for i := 0; i < len(bp.GoFiles); i++ {
+		if r := <-ch; r != nil {
+			close(done)
+			return r.tok, r.pos, nil
 		}
 	}
 

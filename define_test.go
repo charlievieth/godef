@@ -163,8 +163,9 @@ func TestDefine_StdLib(t *testing.T) {
 	runDefineTests(t, true)
 }
 
-func BenchmarkDefine(b *testing.B) {
+func BenchmarkDefine_PackageDecl(b *testing.B) {
 	const filename = "testdata/os/doc.go"
+	const cursor = 3977
 	src, err := ioutil.ReadFile(filename)
 	if err != nil {
 		b.Fatal(err)
@@ -172,7 +173,23 @@ func BenchmarkDefine(b *testing.B) {
 	conf := Config{Context: build.Default}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := conf.Define(filename, 3977, src); err != nil {
+		if _, _, err := conf.Define(filename, cursor, src); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDefine_ImportedDecl(b *testing.B) {
+	const filename = "testdata/os/file.go"
+	const cursor = 6963
+	src, err := ioutil.ReadFile(filename)
+	if err != nil {
+		b.Fatal(err)
+	}
+	conf := Config{Context: build.Default}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := conf.Define(filename, cursor, src); err != nil {
 			b.Fatal(err)
 		}
 	}
