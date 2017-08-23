@@ -379,8 +379,7 @@ func guessImportPath(filename string, buildContext *build.Context) (srcdir, impo
 		}
 	}
 	if srcdir == "" {
-		return "", "", fmt.Errorf("directory %s is not beneath any of these GOROOT/GOPATH directories: %s",
-			filepath.Dir(absFile), strings.Join(buildContext.SrcDirs(), ", "))
+		return "", "", &PathError{Dir: filepath.Dir(absFile), SrcDirs: buildContext.SrcDirs()}
 	}
 	if importPath == "" {
 		// This happens for e.g. $GOPATH/src/a.go, but
