@@ -128,6 +128,37 @@ func updateContextForFile(ctxt *build.Context, filename string, src []byte) *bui
 	return ctxt
 }
 
+func fileExists(name string) bool {
+	fi, err := os.Stat(name)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// WARN make sure filename matches the source file!
+//
+func updateFilename(ctxt *build.Context, filename string) (string, string, bool) {
+	const Separator = string(filepath.Separator)
+
+	if strings.HasPrefix(filename, ctxt.GOROOT) ||
+		strings.HasPrefix(filename, ctxt.GOPATH) {
+		return filename, "", false
+	}
+
+	dirs := segments(filename)
+	for i := len(dirs) - 1; i > 0; i-- {
+		fakeRoot := strings.Join(dirs[:i], Separator)
+		if !fileExists(fakeRoot + Separator + ".fake_goroot") {
+			continue
+		}
+		path := filepath.Join(ctxt.GOROOT, "src", strings.Join(dirs[i:], Separator))
+		if fileExists(path) {
+			return path, fakeRoot, true
+		}
+		break // failed to find a match in GOROOT
+	}
+
+	return filename, "", false
+}
+
 func (c *Config) Define(filename string, cursor int, src interface{}) (*Position, []byte, error) {
 	body, err := readSource(filename, src)
 	if err != nil {
@@ -138,15 +169,25 @@ func (c *Config) Define(filename string, cursor int, src interface{}) (*Position
 	}
 	ctxt := useModifiedFiles(&c.Context, modified)
 	ctxt = updateContextForFile(ctxt, filename, body)
+
+	name, fake, replaceRoot := updateFilename(ctxt, filename)
+
 	query := &Query{
 		Mode:  "definition",
-		Pos:   fmt.Sprintf("%s:#%d", filename, cursor),
+		Pos:   fmt.Sprintf("%s:#%d", name, cursor),
 		Build: ctxt,
 	}
 	if err := definition(query); err != nil {
 		return nil, nil, err
 	}
 	pos := query.Fset.Position(query.result.pos)
+
+	// Replace real GOROOT with fake GOROOT
+	if replaceRoot && fake != "" {
+		old := ctxt.GOROOT + string(filepath.Separator) + "src"
+		pos.Filename = strings.Replace(pos.Filename, old, fake, 1)
+	}
+
 	b, err := ioutil.ReadFile(pos.Filename)
 	if err != nil {
 		return nil, nil, err
