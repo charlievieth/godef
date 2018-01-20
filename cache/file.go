@@ -2,7 +2,6 @@ package cache
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"os"
 	"sync"
@@ -13,86 +12,13 @@ import (
 )
 
 type reader struct {
-	s []byte
-	i int64 // current reading index
+	*bytes.Reader
 }
 
-func newReader(b []byte) *reader { return &reader{b, 0} }
+func (reader) Close() error { return nil }
 
-func (r *reader) Close() error {
-	r.s = nil
-	return nil
-}
-
-func (r *reader) Bytes() []byte { return r.s[r.i:] }
-
-func (r *reader) String() string {
-	if r == nil {
-		return "<nil>"
-	}
-	return string(r.s[r.i:])
-}
-
-func (r *reader) Read(b []byte) (n int, err error) {
-	if r.i >= int64(len(r.s)) {
-		return 0, io.EOF
-	}
-	n = copy(b, r.s[r.i:])
-	r.i += int64(n)
-	return
-}
-
-func (r *reader) ReadAt(b []byte, off int64) (n int, err error) {
-	// cannot modify state - see io.ReaderAt
-	if off < 0 {
-		return 0, errors.New("godef.cache.reader.ReadAt: negative offset")
-	}
-	if off >= int64(len(r.s)) {
-		return 0, io.EOF
-	}
-	n = copy(b, r.s[off:])
-	if n < len(b) {
-		err = io.EOF
-	}
-	return
-}
-
-// Seek implements the io.Seeker interface.
-func (r *reader) Seek(offset int64, whence int) (int64, error) {
-	var abs int64
-	switch whence {
-	case io.SeekStart:
-		abs = offset
-	case io.SeekCurrent:
-		abs = r.i + offset
-	case io.SeekEnd:
-		abs = int64(len(r.s)) + offset
-	default:
-		return 0, errors.New("godef.cache.reader.Seek: invalid whence")
-	}
-	if abs < 0 {
-		return 0, errors.New("godef.cache.reader.Seek: negative position")
-	}
-	r.i = abs
-	return abs, nil
-}
-
-// WriteTo implements the io.WriterTo interface.
-func (r *reader) WriteTo(w io.Writer) (n int64, err error) {
-	if r.i >= int64(len(r.s)) {
-		return 0, nil
-	}
-	b := r.s[r.i:]
-	m, err := w.Write(b)
-	if m > len(b) {
-		panic("godef.cache.reader.WriteTo: invalid Write count")
-	}
-	r.i += int64(m)
-	n = int64(m)
-	if m != len(b) && err == nil {
-		err = io.ErrShortWrite
-	}
-	return -1, nil
+func newReader(data []byte) io.ReadCloser {
+	return reader{bytes.NewReader(data)}
 }
 
 type fileEntry struct {
@@ -174,7 +100,12 @@ func readAll(r io.Reader, capacity int64) (b []byte, err error) {
 	return buf.Bytes(), err
 }
 
+// readFile reads the file named by path, adds it to the cache and returns an
+// io.ReadCloser that provides access to the file.
 func (c *File) readFile(path string) (io.ReadCloser, error) {
+	// We need to Stat the file before adding it to the cache,
+	// so we essentailly duplicate the logic of ioutil.ReadFile
+	// here so that the file is not Stat'd twice.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
