@@ -597,7 +597,7 @@ func sameFile(x, y string) bool {
 }
 
 var (
-	fileCache = cache.NewFile(128*1024*1024, -1) // 128MB
+	fileCache = cache.NewFile(128 * 1024 * 1024) // 128MB
 	dirCache  = cache.NewDir(4096)
 )
 

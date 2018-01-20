@@ -34,19 +34,16 @@ func (f *fileEntry) same(fi os.FileInfo) bool {
 type File struct {
 	sync.Mutex
 	size    int64
-	entries int64
+	maxSize int64
 	cache   lru.Cache
 }
 
-func NewFile(size, entries int64) *File {
-	return &File{
-		size:    size,
-		entries: entries,
-	}
+func NewFile(maxSize int64) *File {
+	return &File{maxSize: maxSize}
 }
 
 func (c *File) maxEntries(_ *lru.Cache) bool {
-	return c.entries > 0 && c.size >= c.entries
+	return c.maxSize > 0 && c.size >= c.maxSize
 }
 
 func (c *File) onAdded(key lru.Key, value interface{}) {
@@ -58,7 +55,7 @@ func (c *File) onEvicted(key lru.Key, value interface{}) {
 }
 
 func (c *File) lazyInit() {
-	if (c.size > 0 || c.entries > 0) && c.cache.MaxEntries == nil {
+	if c.maxSize > 0 && c.cache.MaxEntries == nil {
 		c.cache.MaxEntries = c.maxEntries
 		c.cache.OnAdded = c.onAdded
 		c.cache.OnEvicted = c.onEvicted
