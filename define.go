@@ -166,6 +166,8 @@ func (c *Config) Define(filename string, cursor int, src interface{}) (*Position
 	}
 
 	ctxt := useModifiedFile(&c.Context, filename, body)
+
+	// TODO: replace with buildutil.MatchContext()
 	ctxt = updateContextForFile(ctxt, filename, body)
 
 	name, fake, replaceRoot := updateFilename(ctxt, filename)
